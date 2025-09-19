@@ -28,6 +28,10 @@ import openpi.training.optimizer as _optimizer
 import openpi.training.weight_loaders as weight_loaders
 import openpi.transforms as _transforms
 
+import openpi.policies.rlbench_policy as rlbench_policy
+import openpi.policies.franka_policy as franka_policy
+import openpi.policies.franka_dual_policy as franka_dual_policy
+
 ModelType: TypeAlias = _model.ModelType
 # Work around a tyro issue with using nnx.filterlib.Filter directly.
 Filter: TypeAlias = nnx.filterlib.Filter
@@ -352,7 +356,118 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
             data_transforms=data_transforms,
             model_transforms=model_transforms,
         )
+    
+@dataclasses.dataclass(frozen=True)
+class LeRobotRLBenchDataConfig(DataConfigFactory):
 
+    extra_delta_transform: bool = False
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Make inputs look like they come from the Libero environment
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "image": "image",
+                        "state": "state",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        # Prepare data for policy training
+        # Convert images to uint8 numpy arrays, add masks
+        data_transforms = _transforms.Group(
+            inputs=[rlbench_policy.RLBenchInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
+            outputs=[rlbench_policy.RLBenchOutputs()],
+        )
+
+        # Model transforms include things like tokenizing the prompt and action targets
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+    
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotFrankaDataConfig(DataConfigFactory):
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Make inputs look like they come from the Libero environment
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "image_front": "image_front",
+                        "image_wrist": "image_wrist",
+                        "state": "state",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        # Prepare data for policy training
+        # Convert images to uint8 numpy arrays, add masks
+        data_transforms = _transforms.Group(
+            inputs=[franka_policy.FrankaInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
+            outputs=[franka_policy.FrankaOutputs()],
+        )
+
+        # Model transforms include things like tokenizing the prompt and action targets
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+    
+@dataclasses.dataclass(frozen=True)
+class LeRobotFrankaDualDataConfig(DataConfigFactory):
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Make inputs look like they come from the Libero environment
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "image_front": "image_front",
+                        "image_wrist": "image_wrist",
+                        "image_wrist_right": "image_wrist_right",
+                        "state": "state",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        # Prepare data for policy training
+        # Convert images to uint8 numpy arrays, add masks
+        data_transforms = _transforms.Group(
+            inputs=[franka_dual_policy.FrankaDualInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
+            outputs=[franka_dual_policy.FrankaDualOutputs()],
+        )
+
+        # Model transforms include things like tokenizing the prompt and action targets
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
 
 @dataclasses.dataclass(frozen=True)
 class RLDSDroidDataConfig(DataConfigFactory):
@@ -497,7 +612,7 @@ class TrainConfig:
     batch_size: int = 32
     # Number of workers to use for the data loader. Increasing this number will speed up data loading but
     # will increase memory and CPU usage.
-    num_workers: int = 2
+    num_workers: int = 8
     # Number of train steps (batches) to run.
     num_train_steps: int = 30_000
 
@@ -907,6 +1022,87 @@ _CONFIGS = [
         num_train_steps=20_000,
         batch_size=32,
     ),
+    TrainConfig(
+        name="pi0_rlbench",
+        model=pi0_config.Pi0Config(
+            pi05=False,
+            action_dim=32,  # pi05 is trained with 32-dim actions
+            action_horizon=16,
+        ),
+        data=LeRobotRLBenchDataConfig(
+            repo_id="gaystarc/rlbench_12tasks",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps = 40000,
+        save_interval = 30000,
+        batch_size = 32,
+        fsdp_devices = 8,
+        num_workers = 16,
+    ),
+    TrainConfig(
+        name="pi05_rlbench",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,  # pi05 is trained with 32-dim actions
+            action_horizon=16,
+        ),
+        data=LeRobotRLBenchDataConfig(
+            repo_id="gaystarc/rlbench_12tasks_keyframe_10",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps = 40000,
+        save_interval = 30000,
+        batch_size = 32,
+        fsdp_devices = 4,
+        num_workers = 16,
+    ),
+    TrainConfig(
+        name="pi05_franka",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,  # pi05 is trained with 32-dim actions
+            action_horizon=16,
+        ),
+        data=LeRobotFrankaDataConfig(
+            repo_id="gaystarc/0910_franka_press_stamp",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps = 40000,
+        save_interval = 30000,
+        batch_size = 32,
+        fsdp_devices = 8,
+        num_workers = 16,
+    ),
+    TrainConfig(
+        name="pi05_franka_dual",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,  # pi05 is trained with 32-dim actions
+            action_horizon=16,
+        ),
+        data=LeRobotFrankaDualDataConfig(
+            repo_id="gaystarc/0918_franka_dual_robomind_task2",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps = 40000,
+        save_interval = 10000,
+        batch_size = 32,
+        fsdp_devices = 8,
+        num_workers = 16,
+    ),
+
     #
     # ALOHA Sim configs. This config is used to demonstrate how to train on a simple simulated environment.
     #

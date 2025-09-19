@@ -1,0 +1,2 @@
+export CUDA_VISIBLE_DEVICES=2
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/serve_policy.py --port=8080 policy:checkpoint --policy.config=pi05_rlbench --policy.dir=/gpfs/0607-cluster/guchenyang/Github/openpi/checkpoints/pi05_rlbench/0914_pi05_rlbench_12tasks_keyframe_10/30000
