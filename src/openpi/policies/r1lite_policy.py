@@ -46,6 +46,10 @@ class R1LITEInputs(transforms.DataTransformFn):
         right_wrist_image = _parse_image(data["image_right"])
 
         match self.model_type:
+            case _model.ModelType.PI05:
+                names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
+                images = (base_image, left_wrist_image, right_wrist_image)
+                image_masks = (np.True_, np.True_, np.True_)
             case _model.ModelType.PI0:
                 names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
                 images = (base_image, left_wrist_image, right_wrist_image)

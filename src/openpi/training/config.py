@@ -31,6 +31,7 @@ import openpi.transforms as _transforms
 import openpi.policies.rlbench_policy as rlbench_policy
 import openpi.policies.franka_policy as franka_policy
 import openpi.policies.franka_dual_policy as franka_dual_policy
+import openpi.policies.r1lite_policy as r1lite_policy
 
 ModelType: TypeAlias = _model.ModelType
 # Work around a tyro issue with using nnx.filterlib.Filter directly.
@@ -457,6 +458,43 @@ class LeRobotFrankaDualDataConfig(DataConfigFactory):
         data_transforms = _transforms.Group(
             inputs=[franka_dual_policy.FrankaDualInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
             outputs=[franka_dual_policy.FrankaDualOutputs()],
+        )
+
+        # Model transforms include things like tokenizing the prompt and action targets
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotR1LITEDataConfig(DataConfigFactory):
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Make inputs look like they come from the Libero environment
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "image_head": "image_head",
+                        "image_left": "image_left",
+                        "image_right": "image_right",
+                        "state": "state",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        # Prepare data for policy training
+        # Convert images to uint8 numpy arrays, add masks
+        data_transforms = _transforms.Group(
+            inputs=[r1lite_policy.R1LITEInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
+            outputs=[r1lite_policy.R1LITEOutputs()],
         )
 
         # Model transforms include things like tokenizing the prompt and action targets
@@ -1090,12 +1128,74 @@ _CONFIGS = [
             action_horizon=16,
         ),
         data=LeRobotFrankaDualDataConfig(
-            repo_id="gaystarc/0918_franka_dual_robomind_task2",
+            repo_id="gaystarc/0920_franka_dual_robomind_task6",
             base_config=DataConfig(
                 prompt_from_task=True,
             ),
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps = 40000,
+        save_interval = 10000,
+        batch_size = 32,
+        fsdp_devices = 8,
+        num_workers = 16,
+    ),
+    TrainConfig(
+        name="pi0_franka_dual",
+        model=pi0_config.Pi0Config(
+            pi05=False,
+            action_dim=32,  # pi05 is trained with 32-dim actions
+            action_horizon=16,
+            max_token_len=96,
+        ),
+        data=LeRobotFrankaDualDataConfig(
+            repo_id="gaystarc/0920_franka_dual_robomind_task6",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps = 40000,
+        save_interval = 10000,
+        batch_size = 32,
+        fsdp_devices = 8,
+        num_workers = 16,
+    ),
+    TrainConfig(
+        name="pi05_r1lite",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=32,  # pi05 is trained with 32-dim actions
+            action_horizon=16,
+        ),
+        data=LeRobotR1LITEDataConfig(
+            repo_id="gaystarc/0922_r1lite_dual",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps = 40000,
+        save_interval = 10000,
+        batch_size = 32,
+        fsdp_devices = 8,
+        num_workers = 16,
+    ),
+    TrainConfig(
+        name="pi0_r1lite",
+        model=pi0_config.Pi0Config(
+            pi05=False,
+            action_dim=32,  # pi05 is trained with 32-dim actions
+            action_horizon=16,
+            max_token_len=96,
+        ),
+        data=LeRobotR1LITEDataConfig(
+            repo_id="gaystarc/0922_r1lite_dual",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps = 40000,
         save_interval = 10000,
         batch_size = 32,

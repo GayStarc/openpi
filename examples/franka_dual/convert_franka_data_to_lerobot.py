@@ -35,7 +35,7 @@ def safe_load_episode(file_path: str):
         print(f"Failed to load {file_path}: {e}")
         return None
 
-def main(data_dirs: List[str], REPO_NAME: str):
+def main(data_dirs: List[str], REPO_NAME: str, TASK_PROMPT: str):
     # Clean up any existing dataset in the output directory
     output_path = HF_LEROBOT_HOME / REPO_NAME
     print(f"Output path: {output_path}")
@@ -110,7 +110,7 @@ def main(data_dirs: List[str], REPO_NAME: str):
                     # wrist_image = Image.fromarray(step['left_image'])
                     # right_image = Image.fromarray(step['right_image'])
 
-                    task = "There are 4 blue letters, 4 green letters, and 4 letters of other colors on the desk. Place the blue English letters in the blue plate, the green letters in the green plate, and leave the letters of other colors in place. Do not put any letters in the beige plate."
+                    task = TASK_PROMPT
                     
                     dataset.add_frame({
                         "image_front": front_image,

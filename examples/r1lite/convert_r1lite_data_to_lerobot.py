@@ -1,5 +1,5 @@
 import shutil
-from lerobot.common.datasets.lerobot_dataset import LEROBOT_HOME
+from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 import tyro
 import os
@@ -8,7 +8,8 @@ from PIL import Image
 
 def main(data_dir: str, REPO_NAME: str):
     # Clean up any existing dataset in the output directory
-    output_path = LEROBOT_HOME / REPO_NAME
+    output_path = HF_LEROBOT_HOME / REPO_NAME
+    print(f"Output path: {output_path}")
     if output_path.exists():
         shutil.rmtree(output_path)
 
@@ -63,17 +64,16 @@ def main(data_dir: str, REPO_NAME: str):
         for i, step in enumerate(episode):
             
             dataset.add_frame({
-                "image_head": step['head_image'],
-                "image_left": step['left_image'],
-                "image_right": step['right_image'],
-                "state": step["state"],
-                "actions": step["action"],
+                "image_head": step['image_head'],
+                "image_left": step['image_left_wrist'],
+                "image_right": step['image_right_wrist'],
+                "state": step["state"].astype(np.float32),
+                "actions": step["action"].astype(np.float32),
+                "task": step["language_instruction"],
             })
             
-        dataset.save_episode(task=step["language_instruction"])
+        dataset.save_episode()
 
-    # Consolidate the dataset, skip computing stats since we will do that later
-    dataset.consolidate(run_compute_stats=False)
 
 
 if __name__ == "__main__":
