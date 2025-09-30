@@ -362,27 +362,36 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
 class LeRobotRLBenchDataConfig(DataConfigFactory):
 
     extra_delta_transform: bool = False
+    # Path inside the raw dataset that should be copied into the prompt image field.
+    target_keyframe_field: str | None = None
 
     @override
     def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
         # Make inputs look like they come from the Libero environment
+        repack_mapping: dict[str, str] = {
+            "image": "image",
+            "state": "state",
+            "actions": "actions",
+            "prompt": "prompt",
+        }
+        if self.target_keyframe_field is not None:
+            repack_mapping["target_keyframe_image"] = self.target_keyframe_field
         repack_transform = _transforms.Group(
             inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "image": "image",
-                        "state": "state",
-                        "actions": "actions",
-                        "prompt": "prompt",
-                    }
-                )
+                _transforms.RepackTransform(repack_mapping)
             ]
         )
 
         # Prepare data for policy training
         # Convert images to uint8 numpy arrays, add masks
         data_transforms = _transforms.Group(
-            inputs=[rlbench_policy.RLBenchInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
+            inputs=[
+                rlbench_policy.RLBenchInputs(
+                    action_dim=model_config.action_dim,
+                    model_type=model_config.model_type,
+                    prompt_image_keys=getattr(model_config, "prompt_image_keys", ()),
+                )
+            ],
             outputs=[rlbench_policy.RLBenchOutputs()],
         )
 
@@ -1073,7 +1082,7 @@ _CONFIGS = [
                 prompt_from_task=True,
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi0_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/guchenyang/Code/Checkpoints/openpi/openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps = 40000,
         save_interval = 30000,
         batch_size = 32,
@@ -1086,14 +1095,16 @@ _CONFIGS = [
             pi05=True,
             action_dim=32,  # pi05 is trained with 32-dim actions
             action_horizon=16,
+            prompt_image_keys=tuple(f"target_keyframe_image_{i}" for i in range(10)),
         ),
         data=LeRobotRLBenchDataConfig(
             repo_id="gaystarc/rlbench_12tasks_keyframe_10",
             base_config=DataConfig(
                 prompt_from_task=True,
             ),
+            target_keyframe_field="target_keyframe_image",
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi05_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/guchenyang/Code/Checkpoints/openpi/openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps = 40000,
         save_interval = 30000,
         batch_size = 32,
@@ -1113,7 +1124,7 @@ _CONFIGS = [
                 prompt_from_task=True,
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi05_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/guchenyang/Code/Checkpoints/openpi/openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps = 40000,
         save_interval = 30000,
         batch_size = 32,
@@ -1133,7 +1144,7 @@ _CONFIGS = [
                 prompt_from_task=True,
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi05_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/guchenyang/Code/Checkpoints/openpi/openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps = 40000,
         save_interval = 10000,
         batch_size = 32,
@@ -1146,15 +1157,15 @@ _CONFIGS = [
             pi05=False,
             action_dim=32,  # pi05 is trained with 32-dim actions
             action_horizon=16,
-            max_token_len=96,
+            max_token_len=48,
         ),
         data=LeRobotFrankaDualDataConfig(
-            repo_id="gaystarc/0920_franka_dual_robomind_task6",
+            repo_id="gaystarc/0930_franka_dual_target_image_keyframe",
             base_config=DataConfig(
                 prompt_from_task=True,
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi0_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/guchenyang/Code/Checkpoints/openpi/openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps = 40000,
         save_interval = 10000,
         batch_size = 32,
@@ -1174,7 +1185,7 @@ _CONFIGS = [
                 prompt_from_task=True,
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi05_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/guchenyang/Code/Checkpoints/openpi/openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps = 40000,
         save_interval = 10000,
         batch_size = 32,
@@ -1195,7 +1206,7 @@ _CONFIGS = [
                 prompt_from_task=True,
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("/gpfs/0607-cluster/Checkpoints/Pretrain/openpi/openpi-assets/checkpoints/pi0_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/guchenyang/Code/Checkpoints/openpi/openpi-assets/checkpoints/pi0_base/params"),
         num_train_steps = 40000,
         save_interval = 10000,
         batch_size = 32,

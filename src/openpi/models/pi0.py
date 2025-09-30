@@ -67,6 +67,8 @@ class Pi0(_model.BaseModel):
     def __init__(self, config: pi0_config.Pi0Config, rngs: nnx.Rngs):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
+        self.prompt_image_keys = tuple(config.prompt_image_keys)
+        self.prompt_image_resolution = config.prompt_image_resolution
         paligemma_config = _gemma.get_config(config.paligemma_variant)
         action_expert_config = _gemma.get_config(config.action_expert_variant)
         # TODO: rewrite gemma in NNX. For now, use bridge.
@@ -78,6 +80,7 @@ class Pi0(_model.BaseModel):
             )
         )
         llm.lazy_init(rngs=rngs, method="init", use_adarms=[False, True] if config.pi05 else [False, False])
+        fake_obs = config.fake_obs()
         img = nnx_bridge.ToNNX(
             _siglip.Module(
                 num_classes=paligemma_config.width,
@@ -87,8 +90,25 @@ class Pi0(_model.BaseModel):
                 dtype_mm=config.dtype,
             )
         )
-        img.lazy_init(next(iter(config.fake_obs().images.values())), train=False, rngs=rngs)
-        self.PaliGemma = nnx.Dict(llm=llm, img=img)
+        img.lazy_init(next(iter(fake_obs.images.values())), train=False, rngs=rngs)
+        paligemma_modules = {"llm": llm, "img": img}
+        if self.prompt_image_keys:
+            prompt_variant = config.prompt_image_encoder_variant or "So400m/14"
+            prompt_img = nnx_bridge.ToNNX(
+                _siglip.Module(
+                    num_classes=paligemma_config.width,
+                    variant=prompt_variant,
+                    pool_type="none",
+                    scan=True,
+                    dtype_mm=config.dtype,
+                )
+            )
+            sample_key = self.prompt_image_keys[0]
+            if fake_obs.prompt_images is None or sample_key not in fake_obs.prompt_images:
+                raise ValueError("Prompt image keys configured but fake observation is missing prompt images")
+            prompt_img.lazy_init(fake_obs.prompt_images[sample_key], train=False, rngs=rngs)
+            paligemma_modules["prompt_img"] = prompt_img
+        self.PaliGemma = nnx.Dict(**paligemma_modules)
         self.action_in_proj = nnx.Linear(config.action_dim, action_expert_config.width, rngs=rngs)
         if config.pi05:
             self.time_mlp_in = nnx.Linear(action_expert_config.width, action_expert_config.width, rngs=rngs)
@@ -123,6 +143,28 @@ class Pi0(_model.BaseModel):
             )
             # image tokens attend to each other
             ar_mask += [False] * image_tokens.shape[1]
+
+        if self.prompt_image_keys:
+            if obs.prompt_images is None:
+                raise ValueError("prompt_image_keys provided but observation.prompt_images is None")
+            prompt_encoder = getattr(self.PaliGemma, "prompt_img", None)
+            if prompt_encoder is None:
+                raise ValueError("Prompt image encoder is not initialized")
+            for name in self.prompt_image_keys:
+                if name not in obs.prompt_images:
+                    raise ValueError(f"prompt_images dict missing key '{name}'")
+                prompt_tokens, _ = prompt_encoder(obs.prompt_images[name], train=False)
+                tokens.append(prompt_tokens)
+                if obs.prompt_image_masks is not None and name in obs.prompt_image_masks:
+                    mask = einops.repeat(
+                        obs.prompt_image_masks[name],
+                        "b -> b s",
+                        s=prompt_tokens.shape[1],
+                    )
+                else:
+                    mask = jnp.ones(prompt_tokens.shape[:2], dtype=jnp.bool_)
+                input_mask.append(mask)
+                ar_mask += [False] * prompt_tokens.shape[1]
 
         # add language (aka tokenized inputs)
         if obs.tokenized_prompt is not None:
@@ -190,7 +232,13 @@ class Pi0(_model.BaseModel):
         self, rng: at.KeyArrayLike, observation: _model.Observation, actions: _model.Actions, *, train: bool = False
     ) -> at.Float[at.Array, "*b ah"]:
         preprocess_rng, noise_rng, time_rng = jax.random.split(rng, 3)
-        observation = _model.preprocess_observation(preprocess_rng, observation, train=train)
+        observation = _model.preprocess_observation(
+            preprocess_rng,
+            observation,
+            train=train,
+            prompt_image_keys=self.prompt_image_keys if self.prompt_image_keys else None,
+            prompt_image_resolution=self.prompt_image_resolution,
+        )
 
         batch_shape = actions.shape[:-2]
         noise = jax.random.normal(noise_rng, actions.shape)
@@ -222,7 +270,13 @@ class Pi0(_model.BaseModel):
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
     ) -> _model.Actions:
-        observation = _model.preprocess_observation(None, observation, train=False)
+        observation = _model.preprocess_observation(
+            None,
+            observation,
+            train=False,
+            prompt_image_keys=self.prompt_image_keys if self.prompt_image_keys else None,
+            prompt_image_resolution=self.prompt_image_resolution,
+        )
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
         # distribution. yes, this is the opposite of the pi0 paper, and I'm sorry.
         dt = -1.0 / num_steps

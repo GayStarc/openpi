@@ -42,6 +42,14 @@ IMAGE_KEYS = (
     "right_wrist_0_rgb",
 )
 
+IMAGE_KEYS_DEV = (
+    "base_0_rgb",
+    "left_wrist_0_rgb",
+    "right_wrist_0_rgb",
+    "base_1_rgb",
+)
+
+
 
 # This may need change if we release a small model.
 IMAGE_RESOLUTION = (224, 224)
@@ -106,6 +114,10 @@ class Observation(Generic[ArrayT]):
     # Token loss mask (for FAST autoregressive model).
     token_loss_mask: at.Bool[ArrayT, "*b l"] | None = None
 
+    # Optional vision prompts (e.g. target keyframes) and masks.
+    prompt_images: dict[str, at.Float[ArrayT, "*b h w c"]] | None = None
+    prompt_image_masks: dict[str, at.Bool[ArrayT, "*b"]] | None = None
+
     @classmethod
     def from_dict(cls, data: at.PyTree[ArrayT]) -> "Observation[ArrayT]":
         """This method defines the mapping between unstructured data (i.e., nested dict) to the structured Observation format."""
@@ -118,6 +130,16 @@ class Observation(Generic[ArrayT]):
                 data["image"][key] = data["image"][key].astype(np.float32) / 255.0 * 2.0 - 1.0
             elif hasattr(data["image"][key], "dtype") and data["image"][key].dtype == torch.uint8:
                 data["image"][key] = data["image"][key].to(torch.float32).permute(0, 3, 1, 2) / 255.0 * 2.0 - 1.0
+
+        prompt_images = data.get("prompt_image")
+        if prompt_images is not None:
+            for key in prompt_images:
+                image = prompt_images[key]
+                if getattr(image, "dtype", None) == np.uint8:
+                    prompt_images[key] = image.astype(np.float32) / 255.0 * 2.0 - 1.0
+                elif hasattr(image, "dtype") and image.dtype == torch.uint8:
+                    prompt_images[key] = image.to(torch.float32).permute(0, 3, 1, 2) / 255.0 * 2.0 - 1.0
+
         return cls(
             images=data["image"],
             image_masks=data["image_mask"],
@@ -126,6 +148,8 @@ class Observation(Generic[ArrayT]):
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),
             token_loss_mask=data.get("token_loss_mask"),
+            prompt_images=prompt_images,
+            prompt_image_masks=data.get("prompt_image_mask"),
         )
 
     def to_dict(self) -> at.PyTree[ArrayT]:
@@ -133,6 +157,12 @@ class Observation(Generic[ArrayT]):
         result = dataclasses.asdict(self)
         result["image"] = result.pop("images")
         result["image_mask"] = result.pop("image_masks")
+        prompt_images = result.pop("prompt_images")
+        prompt_image_masks = result.pop("prompt_image_masks")
+        if prompt_images is not None:
+            result["prompt_image"] = prompt_images
+            if prompt_image_masks is not None:
+                result["prompt_image_mask"] = prompt_image_masks
         return result
 
 
@@ -148,6 +178,8 @@ def preprocess_observation(
     train: bool = False,
     image_keys: Sequence[str] = IMAGE_KEYS,
     image_resolution: tuple[int, int] = IMAGE_RESOLUTION,
+    prompt_image_keys: Sequence[str] | None = None,
+    prompt_image_resolution: tuple[int, int] | None = None,
 ) -> Observation:
     """Preprocess the observations by performing image augmentations (if train=True), resizing (if necessary), and
     filling in a default image mask (if necessary).
@@ -197,6 +229,30 @@ def preprocess_observation(
         else:
             out_masks[key] = jnp.asarray(observation.image_masks[key])
 
+    out_prompt_images = None
+    out_prompt_masks = None
+    if prompt_image_keys:
+        if observation.prompt_images is None:
+            raise ValueError("prompt_image_keys provided but observation.prompt_images is None")
+        prompt_image_resolution = prompt_image_resolution or image_resolution
+        out_prompt_images = {}
+        out_prompt_masks = {}
+        for key in prompt_image_keys:
+            if key not in observation.prompt_images:
+                raise ValueError(f"prompt_images dict missing key '{key}'")
+            image = observation.prompt_images[key]
+            if image.shape[1:3] != prompt_image_resolution:
+                logger.info(
+                    f"Resizing prompt image {key} from {image.shape[1:3]} to {prompt_image_resolution}"
+                )
+                image = image_tools.resize_with_pad(image, *prompt_image_resolution)
+            out_prompt_images[key] = image
+
+            if observation.prompt_image_masks is None or key not in observation.prompt_image_masks:
+                out_prompt_masks[key] = jnp.ones(batch_shape, dtype=jnp.bool)
+            else:
+                out_prompt_masks[key] = jnp.asarray(observation.prompt_image_masks[key])
+
     return Observation(
         images=out_images,
         image_masks=out_masks,
@@ -205,6 +261,8 @@ def preprocess_observation(
         tokenized_prompt_mask=observation.tokenized_prompt_mask,
         token_ar_mask=observation.token_ar_mask,
         token_loss_mask=observation.token_loss_mask,
+        prompt_images=out_prompt_images if prompt_image_keys else observation.prompt_images,
+        prompt_image_masks=out_prompt_masks if prompt_image_keys else observation.prompt_image_masks,
     )
 
 

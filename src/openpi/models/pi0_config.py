@@ -31,12 +31,18 @@ class Pi0Config(_model.BaseModelConfig):
     pi05: bool = False
     # This config option is not used directly by the model, but it is read by the ModelTransformFactory.
     discrete_state_input: bool = None  # type: ignore
+    # Optional prompt/target image support.
+    prompt_image_keys: tuple[str, ...] = ()
+    prompt_image_resolution: tuple[int, int] | None = None
+    prompt_image_encoder_variant: str | None = None
 
     def __post_init__(self):
         if self.max_token_len is None:
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
         if self.discrete_state_input is None:
             object.__setattr__(self, "discrete_state_input", self.pi05)
+        if self.prompt_image_keys and self.prompt_image_resolution is None:
+            object.__setattr__(self, "prompt_image_resolution", _model.IMAGE_RESOLUTION)
 
     @property
     @override
@@ -57,6 +63,13 @@ class Pi0Config(_model.BaseModelConfig):
         image_mask_spec = jax.ShapeDtypeStruct([batch_size], jnp.bool_)
 
         with at.disable_typechecking():
+            prompt_images = None
+            prompt_image_masks = None
+            if self.prompt_image_keys:
+                prompt_resolution = self.prompt_image_resolution or _model.IMAGE_RESOLUTION
+                prompt_image_spec = jax.ShapeDtypeStruct([batch_size, *prompt_resolution, 3], jnp.float32)
+                prompt_images = {key: prompt_image_spec for key in self.prompt_image_keys}
+                prompt_image_masks = {key: image_mask_spec for key in self.prompt_image_keys}
             observation_spec = _model.Observation(
                 images={
                     "base_0_rgb": image_spec,
@@ -71,6 +84,8 @@ class Pi0Config(_model.BaseModelConfig):
                 state=jax.ShapeDtypeStruct([batch_size, self.action_dim], jnp.float32),
                 tokenized_prompt=jax.ShapeDtypeStruct([batch_size, self.max_token_len], jnp.int32),
                 tokenized_prompt_mask=jax.ShapeDtypeStruct([batch_size, self.max_token_len], bool),
+                prompt_images=prompt_images,
+                prompt_image_masks=prompt_image_masks,
             )
         action_spec = jax.ShapeDtypeStruct([batch_size, self.action_horizon, self.action_dim], jnp.float32)
 

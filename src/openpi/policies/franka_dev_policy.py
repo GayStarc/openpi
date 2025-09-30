@@ -7,11 +7,14 @@ from openpi import transforms
 from openpi.models import model as _model
 
 
-def make_rlbench_example() -> dict:
-    """Creates a random input example for the Droid policy."""
+def make_franka_example() -> dict:
+    """Creates a random input example for the Franka policy."""
     return {
-        "image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
-        "state": np.random.rand(8),
+        "image_front": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "image_wrist": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "image_wrist_right": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "target_keyframe_image": np.random.randint(256, size=(224, 224, 3), dtype=np.uint8),
+        "state": np.random.rand(14),
         "prompt": "do something",
     }
 
@@ -26,14 +29,14 @@ def _parse_image(image) -> np.ndarray:
 
 
 @dataclasses.dataclass(frozen=True)
-class RLBenchInputs(transforms.DataTransformFn):
+class FrankaDualInputs(transforms.DataTransformFn):
     # The action dimension of the model. Will be used to pad state and actions.
     action_dim: int
 
     # Determines which model will be used.
     model_type: _model.ModelType = _model.ModelType.PI0
     # Optional prompt image keys that should be populated from the dataset.
-    prompt_image_keys: tuple[str, ...] = ()
+    prompt_image_keys: tuple[str, ...] = ("target_keyframe_image")
 
     def __call__(self, data: dict) -> dict:
         state = data["state"]
@@ -41,23 +44,24 @@ class RLBenchInputs(transforms.DataTransformFn):
 
         # Possibly need to parse images to uint8 (H,W,C) since LeRobot automatically
         # stores as float32 (C,H,W), gets skipped for policy inference
-        image = _parse_image(data["image"])
-        blank_image = np.zeros_like(image)
+        base_image = _parse_image(data["image_front"])
+        wrist_image = _parse_image(data["image_wrist"])
+        right_image = _parse_image(data["image_wrist_right"])
 
         match self.model_type:
             case _model.ModelType.PI0:
                 names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
-                images = (image, np.zeros_like(image), np.zeros_like(image))
-                image_masks = (np.True_, np.False_, np.False_)
+                images = (base_image, wrist_image, right_image)
+                image_masks = (np.True_, np.True_, np.True_)
             case _model.ModelType.PI05:
                 names = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb")
-                images = (image, np.zeros_like(image), np.zeros_like(image))
-                image_masks = (np.True_, np.False_, np.False_)
+                images = (base_image, wrist_image, right_image)
+                image_masks = (np.True_, np.True_, np.True_)
             case _model.ModelType.PI0_FAST:
                 names = ("base_0_rgb", "base_1_rgb", "wrist_0_rgb")
                 # We don't mask out padding images for FAST models.
-                images = (image, np.zeros_like(image), np.zeros_like(image))
-                image_masks = (np.True_, np.False_, np.False_)
+                images = (base_image, np.zeros_like(base_image), wrist_image)
+                image_masks = (np.True_, np.True_, np.True_)
             case _:
                 raise ValueError(f"Unsupported model type: {self.model_type}")
 
@@ -77,6 +81,7 @@ class RLBenchInputs(transforms.DataTransformFn):
                     raw_prompt_images = raw_prompt_images[np.newaxis, ...]
                 elif raw_prompt_images.ndim > 4:
                     raw_prompt_images = raw_prompt_images.reshape((-1,) + raw_prompt_images.shape[-3:])
+            blank_image = np.zeros_like(base_image)
             for idx, key in enumerate(self.prompt_image_keys):
                 image_source = None
                 if raw_prompt_images is not None and idx < len(raw_prompt_images):
@@ -103,7 +108,7 @@ class RLBenchInputs(transforms.DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
-class RLBenchOutputs(transforms.DataTransformFn):
+class FrankaDualOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         # Only return the first 7 dims.
-        return {"actions": np.asarray(data["actions"][:, :7])}
+        return {"actions": np.asarray(data["actions"][:, :14])}
