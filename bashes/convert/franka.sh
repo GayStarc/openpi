@@ -8,7 +8,7 @@ uv run examples/franka_dual/convert_franka_data_to_lerobot_dev.py \
   "/home/guchenyang/Code/Data/Franka/Processed/0925_Demo3_npy_key" \
   --REPO-NAME gaystarc/0930_franka_dual_target_image_keyframe \
 
-uv run scripts/compute_norm_stats.py --config-name pi0_franka_dual
+uv run scripts/compute_norm_stats.py --config-name pi0_franka_dual_dev_lora
 
 # export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 # XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_franka_dual --exp-name=0918_pi05_franka_dual_robomind_task1 --overwrite

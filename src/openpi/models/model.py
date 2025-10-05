@@ -148,7 +148,7 @@ class Observation(Generic[ArrayT]):
             tokenized_prompt_mask=data.get("tokenized_prompt_mask"),
             token_ar_mask=data.get("token_ar_mask"),
             token_loss_mask=data.get("token_loss_mask"),
-            prompt_images=prompt_images,
+            prompt_images=data["prompt_image"],
             prompt_image_masks=data.get("prompt_image_mask"),
         )
 

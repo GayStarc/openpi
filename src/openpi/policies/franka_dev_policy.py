@@ -29,16 +29,19 @@ def _parse_image(image) -> np.ndarray:
 
 
 @dataclasses.dataclass(frozen=True)
-class FrankaDualInputs(transforms.DataTransformFn):
+class FrankaDualDevInputs(transforms.DataTransformFn):
     # The action dimension of the model. Will be used to pad state and actions.
     action_dim: int
 
     # Determines which model will be used.
     model_type: _model.ModelType = _model.ModelType.PI0
     # Optional prompt image keys that should be populated from the dataset.
-    prompt_image_keys: tuple[str, ...] = ("target_keyframe_image")
+    prompt_image_keys: tuple[str, ...] = ("target_keyframe_image", )
 
     def __call__(self, data: dict) -> dict:
+        # print(data.keys())
+        # exit()
+
         state = data["state"]
         state = transforms.pad_to_dim(state, self.action_dim)
 
@@ -47,6 +50,7 @@ class FrankaDualInputs(transforms.DataTransformFn):
         base_image = _parse_image(data["image_front"])
         wrist_image = _parse_image(data["image_wrist"])
         right_image = _parse_image(data["image_wrist_right"])
+        target_image = _parse_image(data["target_keyframe_image"])
 
         match self.model_type:
             case _model.ModelType.PI0:
@@ -70,32 +74,13 @@ class FrankaDualInputs(transforms.DataTransformFn):
             "image": dict(zip(names, images, strict=True)),
             "image_mask": dict(zip(names, image_masks, strict=True)),
         }
+        
+        prompt_name = ("target_keyframe_image",)
+        prompt_images = (target_image,)
+        prompt_image_masks = (np.True_,)
 
-        if self.prompt_image_keys:
-            prompt_images: dict[str, np.ndarray] = {}
-            prompt_image_masks: dict[str, np.bool_] = {}
-            raw_prompt_images = data.pop("target_keyframe_image", None)
-            if raw_prompt_images is not None:
-                raw_prompt_images = np.asarray(raw_prompt_images)
-                if raw_prompt_images.ndim == 3:
-                    raw_prompt_images = raw_prompt_images[np.newaxis, ...]
-                elif raw_prompt_images.ndim > 4:
-                    raw_prompt_images = raw_prompt_images.reshape((-1,) + raw_prompt_images.shape[-3:])
-            blank_image = np.zeros_like(base_image)
-            for idx, key in enumerate(self.prompt_image_keys):
-                image_source = None
-                if raw_prompt_images is not None and idx < len(raw_prompt_images):
-                    image_source = raw_prompt_images[idx]
-                elif key in data:
-                    image_source = data.pop(key)
-                if image_source is not None:
-                    prompt_images[key] = _parse_image(image_source)
-                    prompt_image_masks[key] = np.True_
-                else:
-                    prompt_images[key] = blank_image
-                    prompt_image_masks[key] = np.False_
-            inputs["prompt_image"] = prompt_images
-            inputs["prompt_image_mask"] = prompt_image_masks
+        inputs["prompt_image"] = dict(zip(prompt_name, prompt_images, strict=True))
+        inputs["prompt_image_mask"] = dict(zip(prompt_name, prompt_image_masks, strict=True))
 
         if "actions" in data:
             actions = transforms.pad_to_dim(data["actions"], self.action_dim)
@@ -108,7 +93,7 @@ class FrankaDualInputs(transforms.DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
-class FrankaDualOutputs(transforms.DataTransformFn):
+class FrankaDualDevOutputs(transforms.DataTransformFn):
     def __call__(self, data: dict) -> dict:
         # Only return the first 7 dims.
         return {"actions": np.asarray(data["actions"][:, :14])}

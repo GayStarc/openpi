@@ -35,7 +35,7 @@ def safe_load_episode(file_path: str):
         print(f"Failed to load {file_path}: {e}")
         return None
 
-def main(data_dirs: List[str], REPO_NAME: str, TASK_PROMPT: str):
+def main(data_dirs: List[str], REPO_NAME: str):
     # Clean up any existing dataset in the output directory
     output_path = HF_LEROBOT_HOME / REPO_NAME
     print(f"Output path: {output_path}")
@@ -62,6 +62,11 @@ def main(data_dirs: List[str], REPO_NAME: str, TASK_PROMPT: str):
                 "dtype": "image",
                 "shape": (224, 224, 3),
                 "names": ["height", "width", "channel"],  
+            },
+            "target_keyframe_image": {
+                "dtype": "image",
+                "shape": (224, 224, 3),
+                "names": ["height", "width", "channel"],
             },
             "state": {
                 "dtype": "float32",
@@ -112,7 +117,7 @@ def main(data_dirs: List[str], REPO_NAME: str, TASK_PROMPT: str):
                     wrist_image = Image.fromarray(step['left_image'])
                     right_image = Image.fromarray(step['right_image'])
 
-                    task = TASK_PROMPT
+                    task = step['language_instruction']
                     
                     dataset.add_frame({
                         "image_front": front_image,
@@ -123,6 +128,7 @@ def main(data_dirs: List[str], REPO_NAME: str, TASK_PROMPT: str):
                         "actions": step["action"].astype(np.float32),
                         "task": task,
                     })
+
                 except Exception as e:
                     print(f"Error processing step {i} in {file_path}: {e}")
                     continue

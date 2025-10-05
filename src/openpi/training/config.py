@@ -32,6 +32,7 @@ import openpi.policies.rlbench_policy as rlbench_policy
 import openpi.policies.franka_policy as franka_policy
 import openpi.policies.franka_dual_policy as franka_dual_policy
 import openpi.policies.r1lite_policy as r1lite_policy
+import openpi.policies.franka_dev_policy as franka_dual_dev_policy
 
 ModelType: TypeAlias = _model.ModelType
 # Work around a tyro issue with using nnx.filterlib.Filter directly.
@@ -467,6 +468,44 @@ class LeRobotFrankaDualDataConfig(DataConfigFactory):
         data_transforms = _transforms.Group(
             inputs=[franka_dual_policy.FrankaDualInputs(action_dim=model_config.action_dim, model_type=model_config.model_type)],
             outputs=[franka_dual_policy.FrankaDualOutputs()],
+        )
+
+        # Model transforms include things like tokenizing the prompt and action targets
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+        )
+    
+@dataclasses.dataclass(frozen=True)
+class LeRobotFrankaDualDevDataConfig(DataConfigFactory):
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        # Make inputs look like they come from the Libero environment
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "image_front": "image_front",
+                        "image_wrist": "image_wrist",
+                        "image_wrist_right": "image_wrist_right",
+                        "target_keyframe_image": "target_keyframe_image",
+                        "state": "state",
+                        "actions": "actions",
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        # Prepare data for policy training
+        # Convert images to uint8 numpy arrays, add masks
+        data_transforms = _transforms.Group(
+            inputs=[franka_dual_dev_policy.FrankaDualDevInputs(action_dim=model_config.action_dim, model_type=model_config.model_type, prompt_image_keys=("target_keyframe_image", ))],
+            outputs=[franka_dual_dev_policy.FrankaDualDevOutputs()],
         )
 
         # Model transforms include things like tokenizing the prompt and action targets
@@ -1095,14 +1134,12 @@ _CONFIGS = [
             pi05=True,
             action_dim=32,  # pi05 is trained with 32-dim actions
             action_horizon=16,
-            prompt_image_keys=tuple(f"target_keyframe_image_{i}" for i in range(10)),
         ),
         data=LeRobotRLBenchDataConfig(
             repo_id="gaystarc/rlbench_12tasks_keyframe_10",
             base_config=DataConfig(
                 prompt_from_task=True,
             ),
-            target_keyframe_field="target_keyframe_image",
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("/home/guchenyang/Code/Checkpoints/openpi/openpi-assets/checkpoints/pi05_base/params"),
         num_train_steps = 40000,
@@ -1150,6 +1187,33 @@ _CONFIGS = [
         batch_size = 32,
         fsdp_devices = 8,
         num_workers = 16,
+    ),
+    TrainConfig(
+        name="pi0_franka_dual_dev_lora",
+        # model=pi0_config.Pi0Config(
+        #     pi05=False,
+        #     action_dim=32,  # pi05 is trained with 32-dim actions
+        #     action_horizon=16,
+        #     max_token_len=48,
+        # ),
+        model=pi0_config.Pi0Config(pi05=False, action_dim=32, action_horizon=16, max_token_len=48, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"),
+        data=LeRobotFrankaDualDevDataConfig(
+            repo_id="gaystarc/0930_franka_dual_target_image_keyframe",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("/home/guchenyang/Code/Checkpoints/openpi/openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps = 40000,
+        save_interval = 30000,
+        batch_size = 32,
+        fsdp_devices = 4,
+        num_workers = 16,
+        freeze_filter=pi0_config.Pi0Config(
+            paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        # Turn off EMA for LoRA finetuning.
+        ema_decay=None,
     ),
     TrainConfig(
         name="pi0_franka_dual",
